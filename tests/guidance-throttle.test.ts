@@ -55,13 +55,13 @@ describe("guidance throttle", () => {
     expect(grep2).toBeNull();
   });
 
-  it("deny/modify actions are NEVER throttled", () => {
-    // WebFetch deny should always fire
+  it("WebFetch guidance is throttled like other tools (SanitrackV3 fork)", () => {
+    // SanitrackV3: WebFetch returns soft guidance nudge, which IS throttled
     const d1 = routePreToolUse("WebFetch", { url: "https://example.com" }, PROJECT_DIR);
     const d2 = routePreToolUse("WebFetch", { url: "https://other.com" }, PROJECT_DIR);
 
-    expect(d1?.action).toBe("deny");
-    expect(d2?.action).toBe("deny");
+    expect(d1?.action).toBe("context");
+    expect(d2).toBeNull(); // throttled after first
   });
 
   it("resetGuidanceThrottle clears state (simulates new session)", () => {

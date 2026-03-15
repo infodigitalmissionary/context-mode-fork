@@ -153,54 +153,20 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
       }
     }
 
-    // Stage 2: Context-mode routing (existing behavior)
+    // Stage 2: Context-mode routing (SanitrackV3 customization)
+    //
+    // REMOVED hard blocks on curl/wget, inline HTTP, and gradlew/gradle/maven.
+    // Rationale:
+    //   - curl is used for service health checks (localhost:3333, localhost:3000, localhost:9090)
+    //   - wget is occasionally used for asset downloads
+    //   - gradlew is required for EAS/Android APK builds (non-negotiable in our workflow)
+    //   - Inline HTTP (fetch, requests.get) appears in test scripts and seed data
+    //
+    // Instead of blocking, we provide a one-time guidance nudge suggesting sandbox
+    // alternatives for commands that produce large output. The developer retains
+    // full control over which tool to use.
 
-    // curl/wget detection: strip quoted content first to avoid false positives
-    // like `gh issue edit --body "text with curl in it"` (Issue #63).
-    const stripped = stripQuotedContent(command);
-
-    // curl/wget → replace with echo redirect
-    if (/(^|\s|&&|\||\;)(curl|wget)\s/i.test(stripped)) {
-      return {
-        action: "modify",
-        updatedInput: {
-          command: 'echo "context-mode: curl/wget blocked. You MUST use mcp__plugin_context-mode_context-mode__ctx_fetch_and_index(url, source) to fetch URLs, or mcp__plugin_context-mode_context-mode__ctx_execute(language, code) to run HTTP calls in sandbox. Do NOT retry with curl/wget."',
-        },
-      };
-    }
-
-    // Inline HTTP detection: strip only heredocs (not quotes) so that
-    // code passed via -e/-c flags is still visible to the regex, while
-    // heredoc content (e.g. cat << EOF ... requests.get ... EOF) is removed.
-    // These patterns are specific enough that false positives in quoted
-    // text are rare, unlike single-word "curl"/"wget" (Issue #63).
-    const noHeredoc = stripHeredocs(command);
-    if (
-      /fetch\s*\(\s*['"](https?:\/\/|http)/i.test(noHeredoc) ||
-      /requests\.(get|post|put)\s*\(/i.test(noHeredoc) ||
-      /http\.(get|request)\s*\(/i.test(noHeredoc)
-    ) {
-      return {
-        action: "modify",
-        updatedInput: {
-          command: 'echo "context-mode: Inline HTTP blocked. Use mcp__plugin_context-mode_context-mode__ctx_execute(language, code) to run HTTP calls in sandbox, or mcp__plugin_context-mode_context-mode__ctx_fetch_and_index(url, source) for web pages. Do NOT retry with Bash."',
-        },
-      };
-    }
-
-    // Build tools (gradle, maven) → redirect to execute sandbox (Issue #38).
-    // These produce extremely verbose output that should stay in sandbox.
-    if (/(^|\s|&&|\||\;)(\.\/gradlew|gradlew|gradle|\.\/mvnw|mvnw|mvn)\s/i.test(stripped)) {
-      const safeCmd = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      return {
-        action: "modify",
-        updatedInput: {
-          command: `echo "context-mode: Build tool redirected to sandbox. Use mcp__plugin_context-mode_context-mode__ctx_execute(language: \\"shell\\", code: \\"${safeCmd}\\") to run this command. Do NOT retry with Bash."`,
-        },
-      };
-    }
-
-    // allow all other Bash commands, but inject routing nudge (once per session)
+    // allow all Bash commands, but inject routing nudge (once per session)
     return guidanceOnce("bash", BASH_GUIDANCE);
   }
 
@@ -214,26 +180,26 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
     return guidanceOnce("grep", GREP_GUIDANCE);
   }
 
-  // ─── WebFetch: deny + redirect to sandbox ───
+  // ─── WebFetch: soft nudge instead of hard deny (SanitrackV3 customization) ───
+  // REMOVED hard denial. WebFetch/WebSearch are used for documentation lookups,
+  // library research, and Context7 queries. Blocking them breaks our workflow.
+  // Instead, provide a one-time nudge suggesting ctx_fetch_and_index as an alternative.
   if (canonical === "WebFetch") {
-    const url = toolInput.url ?? "";
-    return {
-      action: "deny",
-      reason: `context-mode: WebFetch blocked. Use mcp__plugin_context-mode_context-mode__ctx_fetch_and_index(url: "${url}", source: "...") to fetch this URL in sandbox. Then use mcp__plugin_context-mode_context-mode__ctx_search(queries: [...]) to query results. Do NOT use curl, wget, mcp_web_fetch, or mcp_fetch_tool.`,
-    };
+    return guidanceOnce("webfetch", '<context_guidance>\n  <tip>\n    Consider using mcp__plugin_context-mode_context-mode__ctx_fetch_and_index(url, source) to fetch and index this URL. The indexed content can then be searched with ctx_search(queries) without re-fetching. This keeps raw HTML out of your context window.\n  </tip>\n</context_guidance>');
   }
 
-  // ─── Agent/Task: inject context-mode routing into subagent prompts ───
+  // ─── Agent/Task: lightweight context-mode awareness (SanitrackV3 customization) ───
+  // REMOVED forced prompt injection and subagent_type override.
+  // Rationale:
+  //   - Our swarm orchestration (God's Eye) uses carefully crafted agent prompts
+  //   - Injecting a large ROUTING_BLOCK at the end corrupts orchestrator instructions
+  //   - Overriding subagent_type from "Bash" to "general-purpose" breaks agent dispatch
+  //   - Subagents inherit context-mode MCP tools automatically via the MCP server
+  //
+  // Instead, pass through without modification. Agents that want sandbox tools
+  // can use them directly — the MCP server is available to all agents.
   if (canonical === "Agent" || canonical === "Task") {
-    const subagentType = toolInput.subagent_type ?? "";
-    const prompt = toolInput.prompt ?? "";
-
-    const updatedInput =
-      subagentType === "Bash"
-        ? { ...toolInput, prompt: prompt + ROUTING_BLOCK, subagent_type: "general-purpose" }
-        : { ...toolInput, prompt: prompt + ROUTING_BLOCK };
-
-    return { action: "modify", updatedInput };
+    return null; // passthrough — do not modify agent prompts
   }
 
   // ─── MCP execute: security check for shell commands ───

@@ -32,53 +32,43 @@ beforeEach(() => {
   if (typeof resetGuidanceThrottle === "function") resetGuidanceThrottle();
 });
 
-describe("routePreToolUse", () => {
+describe("routePreToolUse (SanitrackV3 fork)", () => {
   // ─── Bash routing ──────────────────────────────────────
 
   describe("Bash tool", () => {
-    it("denies curl commands with modify action", () => {
+    // SanitrackV3: curl/wget are ALLOWED (used for health checks)
+    it("allows curl commands with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "curl https://example.com",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect(result!.updatedInput).toBeDefined();
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "curl/wget blocked",
-      );
+      expect(result!.action).toBe("context");
+      expect(result!.additionalContext).toBeDefined();
     });
 
-    it("denies wget commands with modify action", () => {
+    it("allows wget commands with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "wget https://example.com/file.tar.gz",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "curl/wget blocked",
-      );
+      expect(result!.action).toBe("context");
     });
 
-    it("denies inline fetch() with modify action", () => {
+    // SanitrackV3: inline HTTP is ALLOWED
+    it("allows inline fetch() with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: 'node -e "fetch(\'https://api.example.com/data\')"',
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "Inline HTTP blocked",
-      );
+      expect(result!.action).toBe("context");
     });
 
-    it("denies requests.get() with modify action", () => {
+    it("allows requests.get() with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: 'python -c "import requests; requests.get(\'https://example.com\')"',
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "Inline HTTP blocked",
-      );
+      expect(result!.action).toBe("context");
     });
 
     it("allows git status with BASH_GUIDANCE context", () => {
@@ -102,48 +92,46 @@ describe("routePreToolUse", () => {
       expect(result!.action).toBe("context");
     });
 
-    it("redirects ./gradlew build to execute sandbox", () => {
+    // SanitrackV3: gradlew/gradle/maven are ALLOWED (needed for APK builds)
+    it("allows ./gradlew build with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "./gradlew build",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "Build tool redirected",
-      );
+      expect(result!.action).toBe("context");
     });
 
-    it("redirects gradle test to execute sandbox", () => {
+    it("allows gradle test with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "gradle test --info",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("context");
     });
 
-    it("redirects mvn package to execute sandbox", () => {
+    it("allows mvn package with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "mvn clean package -DskipTests",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("context");
     });
 
-    it("redirects ./mvnw verify to execute sandbox", () => {
+    it("allows ./mvnw verify with guidance nudge", () => {
       const result = routePreToolUse("Bash", {
         command: "./mvnw verify",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("context");
     });
 
-    it("does not false-positive on gradle in quoted text", () => {
-      const result = routePreToolUse("Bash", {
-        command: 'echo "run gradle build to compile"',
-      });
-      expect(result).not.toBeNull();
-      // stripped version removes quoted content → no gradle match → context
-      expect(result!.action).toBe("context");
+    it("guidance is only shown once per session", () => {
+      const first = routePreToolUse("Bash", { command: "git status" });
+      expect(first).not.toBeNull();
+      expect(first!.action).toBe("context");
+
+      const second = routePreToolUse("Bash", { command: "ls -la" });
+      expect(second).toBeNull(); // throttled
     });
   });
 
@@ -177,86 +165,77 @@ describe("routePreToolUse", () => {
   // ─── WebFetch routing ──────────────────────────────────
 
   describe("WebFetch tool", () => {
-    it("returns deny action with redirect message", () => {
+    // SanitrackV3: WebFetch is ALLOWED with a soft nudge (not denied)
+    it("returns context guidance nudge instead of denial", () => {
       const result = routePreToolUse("WebFetch", {
         url: "https://docs.example.com",
         prompt: "Get the docs",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("WebFetch blocked");
-      expect(result!.reason).toContain("fetch_and_index");
+      expect(result!.action).toBe("context");
+      expect(result!.additionalContext).toContain("fetch_and_index");
     });
 
-    it("includes the URL in deny reason", () => {
-      const url = "https://api.github.com/repos/test";
-      const result = routePreToolUse("WebFetch", { url });
+    it("guidance mentions ctx_search as follow-up", () => {
+      const result = routePreToolUse("WebFetch", {
+        url: "https://api.github.com/repos/test",
+      });
       expect(result).not.toBeNull();
-      expect(result!.reason).toContain(url);
+      expect(result!.action).toBe("context");
     });
 
-    it("treats mcp_web_fetch as WebFetch and blocks it", () => {
+    it("treats mcp_web_fetch as WebFetch with soft nudge", () => {
       const url = "https://example.com";
       const result = routePreToolUse("mcp_web_fetch", { url });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("mcp_web_fetch");
-      expect(result!.reason).toContain("fetch_and_index");
-      expect(result!.reason).toContain("ctx_search");
+      expect(result!.action).toBe("context");
+      expect(result!.additionalContext).toContain("fetch_and_index");
     });
 
-    it("treats mcp_fetch_tool as WebFetch and blocks it", () => {
+    it("treats mcp_fetch_tool as WebFetch with soft nudge", () => {
       const url = "https://example.com";
       const result = routePreToolUse("mcp_fetch_tool", { url });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("deny");
-      expect(result!.reason).toContain("mcp_fetch_tool");
-      expect(result!.reason).toContain("fetch_and_index");
-      expect(result!.reason).toContain("ctx_search");
+      expect(result!.action).toBe("context");
+      expect(result!.additionalContext).toContain("fetch_and_index");
+    });
+
+    it("webfetch guidance is only shown once per session", () => {
+      const first = routePreToolUse("WebFetch", { url: "https://a.com" });
+      expect(first).not.toBeNull();
+      expect(first!.action).toBe("context");
+
+      const second = routePreToolUse("WebFetch", { url: "https://b.com" });
+      expect(second).toBeNull(); // throttled
     });
   });
 
-  // ─── Task routing ──────────────────────────────────────
+  // ─── Agent/Task routing ─────────────────────────────────
 
-  describe("Task tool", () => {
-    it("injects ROUTING_BLOCK into prompt", () => {
+  describe("Agent/Task tool (SanitrackV3: passthrough)", () => {
+    // SanitrackV3: Agent/Task prompts are NOT modified
+    it("passes through Task without modification", () => {
       const result = routePreToolUse("Task", {
         prompt: "Analyze the codebase",
         subagent_type: "general-purpose",
       });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect(result!.updatedInput).toBeDefined();
-      expect((result!.updatedInput as Record<string, string>).prompt).toContain(
-        "Analyze the codebase",
-      );
-      expect((result!.updatedInput as Record<string, string>).prompt).toContain(
-        "context_window_protection",
-      );
+      expect(result).toBeNull();
     });
 
-    it("upgrades Bash subagent to general-purpose", () => {
+    it("does NOT upgrade Bash subagent type", () => {
       const result = routePreToolUse("Task", {
         prompt: "Run some commands",
         subagent_type: "Bash",
       });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect(
-        (result!.updatedInput as Record<string, string>).subagent_type,
-      ).toBe("general-purpose");
+      expect(result).toBeNull();
     });
 
-    it("keeps non-Bash subagent type unchanged", () => {
-      const result = routePreToolUse("Task", {
+    it("passes through Agent without modification", () => {
+      const result = routePreToolUse("Agent", {
         prompt: "Do research",
         subagent_type: "general-purpose",
       });
-      expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect(
-        (result!.updatedInput as Record<string, string>).subagent_type,
-      ).toBe("general-purpose");
+      expect(result).toBeNull();
     });
   });
 
@@ -325,6 +304,28 @@ describe("routePreToolUse", () => {
         query: "vitest documentation",
       });
       expect(result).toBeNull();
+    });
+  });
+
+  // ─── Platform alias tests ───────────────────────────────
+
+  describe("platform tool aliases", () => {
+    it("routes run_shell_command (Gemini) as Bash", () => {
+      const result = routePreToolUse("run_shell_command", { command: "ls" });
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("context"); // bash guidance
+    });
+
+    it("routes read_file (Gemini) as Read", () => {
+      const result = routePreToolUse("read_file", { file_path: "/test" });
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("context"); // read guidance
+    });
+
+    it("routes run_in_terminal (VS Code) as Bash", () => {
+      const result = routePreToolUse("run_in_terminal", { command: "echo hi" });
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("context");
     });
   });
 });

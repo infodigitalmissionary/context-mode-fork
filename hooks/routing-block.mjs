@@ -6,40 +6,25 @@
 export const ROUTING_BLOCK = `
 <context_window_protection>
   <priority_instructions>
-    Raw tool output floods your context window. You MUST use context-mode MCP tools to keep raw data in the sandbox.
+    context-mode MCP tools are available to reduce context window usage.
+    Use them when commands produce large output (>50 lines) or when fetching web pages.
+    All standard tools (Bash, Read, Grep, WebFetch, Agent) remain fully available.
   </priority_instructions>
 
   <tool_selection_hierarchy>
-    1. GATHER: mcp__plugin_context-mode_context-mode__ctx_batch_execute(commands, queries)
-       - Primary tool for research. Runs all commands, auto-indexes, and searches.
-       - ONE call replaces many individual steps.
-    2. FOLLOW-UP: mcp__plugin_context-mode_context-mode__ctx_search(queries: ["q1", "q2", ...])
-       - Use for all follow-up questions. ONE call, many queries.
-    3. PROCESSING: mcp__plugin_context-mode_context-mode__ctx_execute(language, code) | mcp__plugin_context-mode_context-mode__ctx_execute_file(path, language, code)
-       - Use for API calls, log analysis, and data processing.
+    1. GATHER: ctx_batch_execute(commands, queries) — runs multiple commands, auto-indexes, returns search results. Ideal for large-output research.
+    2. FOLLOW-UP: ctx_search(queries: ["q1", "q2", ...]) — query previously indexed content.
+    3. PROCESSING: ctx_execute(language, code) | ctx_execute_file(path, language, code) — sandbox execution, only stdout enters context.
+    4. WEB: ctx_fetch_and_index(url, source) then ctx_search(queries) — fetch and index web pages without raw HTML in context.
+    5. INDEX: ctx_index(content, source) — store content in FTS5 knowledge base for later search.
   </tool_selection_hierarchy>
 
-  <forbidden_actions>
-    - DO NOT use Bash for commands producing >20 lines of output.
-    - DO NOT use Read for analysis (use execute_file). Read IS correct for files you intend to Edit.
-    - DO NOT use WebFetch (use mcp__plugin_context-mode_context-mode__ctx_fetch_and_index instead).
-    - Bash is ONLY for git/mkdir/rm/mv/navigation.
-  </forbidden_actions>
-
-  <output_constraints>
-    <word_limit>Keep your final response under 500 words.</word_limit>
-    <artifact_policy>
-      Write artifacts (code, configs, PRDs) to FILES. NEVER return them as inline text.
-      Return only: file path + 1-line description.
-    </artifact_policy>
-    <response_format>
-      Your response must be a concise summary:
-      - Actions taken (2-3 bullets)
-      - File paths created/modified
-      - Knowledge base source labels (so parent can search)
-      - Key findings
-    </response_format>
-  </output_constraints>
+  <guidelines>
+    - Prefer sandbox tools for commands producing large output (build logs, test suites, large grep results).
+    - Read is always correct for files you intend to Edit.
+    - Bash, curl, wget, gradlew, and all other CLI tools are fully permitted.
+    - WebFetch is permitted but ctx_fetch_and_index is more context-efficient for large pages.
+  </guidelines>
 
   <ctx_commands>
     When the user says "ctx stats", "ctx-stats", "/ctx-stats", or asks about context savings:

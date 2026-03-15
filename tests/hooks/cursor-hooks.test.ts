@@ -2,9 +2,9 @@
  * Hook Integration Tests — Cursor hooks
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync, existsSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -53,6 +53,15 @@ describe("Cursor hooks", () => {
     try { if (existsSync(eventsPath)) unlinkSync(eventsPath); } catch { /* best effort */ }
   });
 
+  // Clean file-based guidance throttle markers between tests.
+  // Subprocess hooks use process.ppid (= this test's pid) for marker dir.
+  beforeEach(() => {
+    const wid = process.env.VITEST_WORKER_ID;
+    const suffix = wid ? `${process.pid}-w${wid}` : String(process.pid);
+    const guidanceDir = resolve(tmpdir(), `context-mode-guidance-${suffix}`);
+    try { rmSync(guidanceDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
   const cursorEnv = () => ({ CURSOR_CWD: tempDir });
 
   describe("pretooluse.mjs", () => {
@@ -78,7 +87,8 @@ describe("Cursor hooks", () => {
       expect(result.stdout).toBe("{\"agent_message\":\"\"}");
     });
 
-    test("rewrites curl shell commands", () => {
+    // SanitrackV3 fork: curl is allowed (returns guidance nudge, not modify)
+    test("allows curl shell commands with guidance", () => {
       const result = runHook("pretooluse.mjs", {
         tool_name: "Shell",
         tool_input: { command: "curl https://example.com" },
@@ -88,10 +98,12 @@ describe("Cursor hooks", () => {
 
       expect(result.exitCode).toBe(0);
       const payload = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(payload.updated_input).toBeTruthy();
+      // Should get agent_message with guidance, not updated_input
+      expect(payload.agent_message).toBeTruthy();
     });
 
-    test("blocks WebFetch with a readable reason", () => {
+    // SanitrackV3 fork: WebFetch returns soft nudge, not deny
+    test("allows WebFetch with guidance nudge", () => {
       const result = runHook("pretooluse.mjs", {
         tool_name: "WebFetch",
         tool_input: { url: "https://example.com" },
@@ -101,11 +113,10 @@ describe("Cursor hooks", () => {
 
       expect(result.exitCode).toBe(0);
       const payload = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(payload.permission).toBe("deny");
-      expect(String(payload.user_message)).toContain("WebFetch blocked");
+      expect(String(payload.agent_message)).toContain("fetch_and_index");
     });
 
-    test("blocks mcp_web_fetch with the same sandbox redirect", () => {
+    test("allows mcp_web_fetch with guidance nudge", () => {
       const result = runHook("pretooluse.mjs", {
         tool_name: "mcp_web_fetch",
         tool_input: { url: "https://example.com" },
@@ -115,13 +126,10 @@ describe("Cursor hooks", () => {
 
       expect(result.exitCode).toBe(0);
       const payload = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(payload.permission).toBe("deny");
-      expect(String(payload.user_message)).toContain("mcp_web_fetch");
-      expect(String(payload.user_message)).toContain("ctx_fetch_and_index");
-      expect(String(payload.user_message)).toContain("ctx_search");
+      expect(String(payload.agent_message)).toContain("fetch_and_index");
     });
 
-    test("blocks mcp_fetch_tool with the same sandbox redirect", () => {
+    test("allows mcp_fetch_tool with guidance nudge", () => {
       const result = runHook("pretooluse.mjs", {
         tool_name: "mcp_fetch_tool",
         tool_input: { url: "https://example.com" },
@@ -131,10 +139,7 @@ describe("Cursor hooks", () => {
 
       expect(result.exitCode).toBe(0);
       const payload = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(payload.permission).toBe("deny");
-      expect(String(payload.user_message)).toContain("mcp_fetch_tool");
-      expect(String(payload.user_message)).toContain("ctx_fetch_and_index");
-      expect(String(payload.user_message)).toContain("ctx_search");
+      expect(String(payload.agent_message)).toContain("fetch_and_index");
     });
   });
 
@@ -233,7 +238,8 @@ describe("Cursor hooks", () => {
 
       expect(startResult.exitCode).toBe(0);
       const payload = JSON.parse(startResult.stdout) as Record<string, unknown>;
-      expect(String(payload.additional_context)).toContain("session_knowledge");
+      // Session start should include context-mode routing info
+      expect(String(payload.additional_context)).toContain("context-mode");
     });
   });
 });
